@@ -1,7 +1,8 @@
 --[[
-    UNIVERSAL ESP SCRIPT - FIXED VERSION
+    UNIVERSAL ESP SCRIPT - FULLY FIXED
     Hỗ trợ: Delta Executor
-    Tính năng: ESP Box (chính xác), Line, Name, Distance, Player Count, Menu có thể thu nhỏ
+    Tính năng: ESP Box, Line, Name, Distance, Player Count, Menu thu nhỏ
+    Fix: Toggle hoạt động chính xác, ESP cập nhật realtime
 --]]
 
 -- Services
@@ -43,6 +44,8 @@ local Settings = {
 
 -- ESP Objects Table
 local ESPObjects = {}
+-- Lưu tất cả connections để cleanup
+local AllConnections = {}
 
 -- Create ScreenGui
 local ScreenGui = Instance.new("ScreenGui")
@@ -50,17 +53,79 @@ ScreenGui.Name = "UniversalESP"
 ScreenGui.Parent = CoreGui
 ScreenGui.ResetOnSpawn = false
 
--- Create Folder for ESP drawings
-local ESPFolder = Instance.new("Folder")
-ESPFolder.Name = "ESPFolder"
-ESPFolder.Parent = ScreenGui
-
--- Create Menu
+-- Menu elements
 local MenuGui
 local MainFrame
 local PlayerCountLabel
 local MinimizeButton
 
+-- Tạo nút toggle
+local function CreateToggleButton(Parent, Name, YPos, DefaultState, Callback)
+    local ToggleFrame = Instance.new("Frame")
+    ToggleFrame.Size = UDim2.new(1, -20, 0, 30)
+    ToggleFrame.Position = UDim2.new(0, 10, 0, YPos)
+    ToggleFrame.BackgroundTransparency = 1
+    ToggleFrame.Parent = Parent
+    
+    local ToggleLabel = Instance.new("TextLabel")
+    ToggleLabel.Size = UDim2.new(0.7, 0, 1, 0)
+    ToggleLabel.BackgroundTransparency = 1
+    ToggleLabel.Text = Name
+    ToggleLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    ToggleLabel.TextSize = 14
+    ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    ToggleLabel.Font = Enum.Font.Gotham
+    ToggleLabel.Parent = ToggleFrame
+    
+    local ToggleButton = Instance.new("TextButton")
+    ToggleButton.Size = UDim2.new(0, 40, 0, 20)
+    ToggleButton.Position = UDim2.new(1, -40, 0.5, -10)
+    ToggleButton.BackgroundColor3 = DefaultState and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 50, 50)
+    ToggleButton.BorderSizePixel = 0
+    ToggleButton.Text = DefaultState and "ON" or "OFF"
+    ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ToggleButton.TextSize = 12
+    ToggleButton.Font = Enum.Font.GothamBold
+    ToggleButton.AutoButtonColor = false
+    ToggleButton.Parent = ToggleFrame
+    
+    local ButtonCorner = Instance.new("UICorner")
+    ButtonCorner.CornerRadius = UDim.new(0, 4)
+    ButtonCorner.Parent = ToggleButton
+    
+    -- Trạng thái hiện tại
+    local isEnabled = DefaultState
+    
+    -- Hàm cập nhật giao diện nút
+    local function UpdateButton()
+        ToggleButton.BackgroundColor3 = isEnabled and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 50, 50)
+        ToggleButton.Text = isEnabled and "ON" or "OFF"
+    end
+    
+    -- Sự kiện click
+    ToggleButton.MouseButton1Click:Connect(function()
+        isEnabled = not isEnabled
+        UpdateButton()
+        if Callback then
+            Callback(isEnabled)
+        end
+    end)
+    
+    -- Trả về object để có thể lấy trạng thái
+    return {
+        Button = ToggleButton,
+        GetState = function() return isEnabled end,
+        SetState = function(state) 
+            isEnabled = state 
+            UpdateButton()
+            if Callback then
+                Callback(state)
+            end
+        end
+    }
+end
+
+-- Tạo Menu chính
 local function CreateMenu()
     MenuGui = Instance.new("ScreenGui")
     MenuGui.Name = "ESPMenu"
@@ -131,76 +196,78 @@ local function CreateMenu()
     PlayerCountLabel.Font = Enum.Font.Gotham
     PlayerCountLabel.Parent = MainFrame
     
-    -- Toggle Functions
-    local function CreateToggle(Name, YPos, Setting, Callback)
-        local ToggleFrame = Instance.new("Frame")
-        ToggleFrame.Size = UDim2.new(1, -20, 0, 30)
-        ToggleFrame.Position = UDim2.new(0, 10, 0, YPos)
-        ToggleFrame.BackgroundTransparency = 1
-        ToggleFrame.Parent = MainFrame
-        
-        local ToggleLabel = Instance.new("TextLabel")
-        ToggleLabel.Size = UDim2.new(0.7, 0, 1, 0)
-        ToggleLabel.BackgroundTransparency = 1
-        ToggleLabel.Text = Name
-        ToggleLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-        ToggleLabel.TextSize = 14
-        ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
-        ToggleLabel.Font = Enum.Font.Gotham
-        ToggleLabel.Parent = ToggleFrame
-        
-        local ToggleButton = Instance.new("TextButton")
-        ToggleButton.Size = UDim2.new(0, 40, 0, 20)
-        ToggleButton.Position = UDim2.new(1, -40, 0.5, -10)
-        ToggleButton.BackgroundColor3 = Setting and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 50, 50)
-        ToggleButton.BorderSizePixel = 0
-        ToggleButton.Text = Setting and "ON" or "OFF"
-        ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        ToggleButton.TextSize = 12
-        ToggleButton.Font = Enum.Font.GothamBold
-        ToggleButton.AutoButtonColor = false
-        ToggleButton.Parent = ToggleFrame
-        
-        local ButtonCorner = Instance.new("UICorner")
-        ButtonCorner.CornerRadius = UDim.new(0, 4)
-        ButtonCorner.Parent = ToggleButton
-        
-        ToggleButton.MouseButton1Click:Connect(function()
-            Setting = not Setting
-            ToggleButton.BackgroundColor3 = Setting and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 50, 50)
-            ToggleButton.Text = Setting and "ON" or "OFF"
-            if Callback then
-                Callback(Setting)
-            end
-        end)
-        
-        return ToggleButton, Setting
-    end
+    -- Tạo các toggle với callback cập nhật Settings trực tiếp
+    local Toggles = {}
     
-    CreateToggle("ESP Enabled", 90, Settings.ESP.Enabled, function(val)
-        Settings.ESP.Enabled = val
-        if not val then
-            HideAllESP()
+    Toggles.ESPEnabled = CreateToggleButton(MainFrame, "ESP Enabled", 90, Settings.ESP.Enabled, function(state)
+        Settings.ESP.Enabled = state
+        print("ESP Enabled:", state)
+        if not state then
+            -- Ẩn tất cả ESP nhưng không xóa
+            for player, data in pairs(ESPObjects) do
+                if data and data.Box then data.Box.Visible = false end
+                if data and data.Tracer then data.Tracer.Visible = false end
+                if data and data.NameTag then data.NameTag.Visible = false end
+                if data and data.DistanceTag then data.DistanceTag.Visible = false end
+            end
         end
     end)
-    CreateToggle("ESP Box", 125, Settings.ESP.Box, function(val)
-        Settings.ESP.Box = val
-        ClearESP()
-    end)
-    CreateToggle("ESP Tracers", 160, Settings.ESP.Tracers, function(val)
-        Settings.ESP.Tracers = val
-        ClearESP()
-    end)
-    CreateToggle("ESP Names", 195, Settings.ESP.Names, function(val)
-        Settings.ESP.Names = val
-        ClearESP()
-    end)
-    CreateToggle("ESP Distance", 230, Settings.ESP.Distance, function(val)
-        Settings.ESP.Distance = val
-        ClearESP()
+    
+    Toggles.Box = CreateToggleButton(MainFrame, "ESP Box", 125, Settings.ESP.Box, function(state)
+        Settings.ESP.Box = state
+        print("Box:", state)
+        -- Cập nhật visibility cho tất cả box hiện có
+        for player, data in pairs(ESPObjects) do
+            if data and data.Box then
+                data.Box.Visible = state and Settings.ESP.Enabled
+            end
+        end
+        -- Nếu bật lại, refresh ESP
+        if state and Settings.ESP.Enabled then
+            RefreshESP()
+        end
     end)
     
-    -- Close Button (Thu nhỏ thay vì tắt hẳn)
+    Toggles.Tracers = CreateToggleButton(MainFrame, "ESP Tracers", 160, Settings.ESP.Tracers, function(state)
+        Settings.ESP.Tracers = state
+        print("Tracers:", state)
+        for player, data in pairs(ESPObjects) do
+            if data and data.Tracer then
+                data.Tracer.Visible = state and Settings.ESP.Enabled
+            end
+        end
+        if state and Settings.ESP.Enabled then
+            RefreshESP()
+        end
+    end)
+    
+    Toggles.Names = CreateToggleButton(MainFrame, "ESP Names", 195, Settings.ESP.Names, function(state)
+        Settings.ESP.Names = state
+        print("Names:", state)
+        for player, data in pairs(ESPObjects) do
+            if data and data.NameTag then
+                data.NameTag.Visible = state and Settings.ESP.Enabled
+            end
+        end
+        if state and Settings.ESP.Enabled then
+            RefreshESP()
+        end
+    end)
+    
+    Toggles.Distance = CreateToggleButton(MainFrame, "ESP Distance", 230, Settings.ESP.Distance, function(state)
+        Settings.ESP.Distance = state
+        print("Distance:", state)
+        for player, data in pairs(ESPObjects) do
+            if data and data.DistanceTag then
+                data.DistanceTag.Visible = state and Settings.ESP.Enabled
+            end
+        end
+        if state and Settings.ESP.Enabled then
+            RefreshESP()
+        end
+    end)
+    
+    -- Close Button (Thu nhỏ)
     local CloseButton = Instance.new("TextButton")
     CloseButton.Size = UDim2.new(0, 80, 0, 30)
     CloseButton.Position = UDim2.new(0.5, -40, 0, 330)
@@ -221,10 +288,10 @@ local function CreateMenu()
         MinimizeMenu()
     end)
     
-    return MenuGui, PlayerCountLabel
+    return MenuGui, PlayerCountLabel, Toggles
 end
 
--- Tạo icon thu nhỏ có thể kéo
+-- Tạo icon thu nhỏ
 local function CreateMinimizedIcon()
     MinimizeButton = Instance.new("TextButton")
     MinimizeButton.Name = "MinimizedESP"
@@ -245,10 +312,6 @@ local function CreateMinimizedIcon()
     local IconCorner = Instance.new("UICorner")
     IconCorner.CornerRadius = UDim.new(0, 25)
     IconCorner.Parent = MinimizeButton
-    
-    local UICorner2 = Instance.new("UICorner")
-    UICorner2.CornerRadius = UDim.new(0, 25)
-    UICorner2.Parent = MinimizeButton
     
     MinimizeButton.MouseButton1Click:Connect(function()
         MaximizeMenu()
@@ -282,7 +345,8 @@ function MaximizeMenu()
 end
 
 -- Tạo menu và icon
-MenuGui, PlayerCountLabel = CreateMenu()
+local Toggles
+MenuGui, PlayerCountLabel, Toggles = CreateMenu()
 MinimizeButton = CreateMinimizedIcon()
 
 -- Toggle Menu Keybind
@@ -297,33 +361,31 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
--- Ẩn tất cả ESP
-function HideAllESP()
-    for player, objects in pairs(ESPObjects) do
-        if type(objects) == "table" then
-            for _, obj in pairs(objects) do
-                if obj and type(obj) ~= "userdata" and obj.Visible ~= nil then
-                    obj.Visible = false
-                end
+-- Refresh ESP cho tất cả player
+function RefreshESP()
+    -- Xóa ESP cũ và tạo lại
+    for player, data in pairs(ESPObjects) do
+        if data then
+            -- Ngắt connection cũ
+            if data.Connection then
+                data.Connection:Disconnect()
+                data.Connection = nil
             end
-        end
-    end
-end
-
--- Clear ESP hoàn toàn
-function ClearESP()
-    for player, objects in pairs(ESPObjects) do
-        if type(objects) == "table" then
-            for i, obj in pairs(objects) do
-                if obj and type(obj) ~= "thread" and type(obj) ~= "userdata" then
-                    pcall(function() obj:Remove() end)
-                elseif type(obj) == "userdata" then
-                    pcall(function() obj:Destroy() end)
-                end
-            end
+            -- Xóa drawing objects
+            if data.Box then pcall(function() data.Box:Destroy() end) end
+            if data.Tracer then pcall(function() data.Tracer:Destroy() end) end
+            if data.NameTag then pcall(function() data.NameTag:Destroy() end) end
+            if data.DistanceTag then pcall(function() data.DistanceTag:Destroy() end) end
         end
     end
     ESPObjects = {}
+    
+    -- Tạo ESP mới cho tất cả player
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            CreateESP(player)
+        end
+    end
 end
 
 -- World to Screen
@@ -345,15 +407,11 @@ local function GetCharacterBounds(Character)
         return nil
     end
     
-    -- Tính toán vị trí
     local rootPos = HumanoidRootPart.Position
     local headPos = Head.Position
     
-    -- Chiều cao từ chân đến đỉnh đầu
-    local height = (headPos.Y - rootPos.Y) + 2 -- Thêm offset cho đỉnh đầu
-    local width = height * 0.65 -- Tỉ lệ chiều rộng
-    
-    -- Vị trí trung tâm
+    local height = (headPos.Y - rootPos.Y) + 2
+    local width = height * 0.65
     local centerPos = Vector3.new(rootPos.X, rootPos.Y + height/2, rootPos.Z)
     
     return {
@@ -361,26 +419,24 @@ local function GetCharacterBounds(Character)
         Height = height,
         Width = width,
         RootPos = rootPos,
-        HeadPos = headPos + Vector3.new(0, 0.5, 0), -- Offset lên một chút
-        FeetPos = rootPos - Vector3.new(0, 3, 0) -- Vị trí chân
+        HeadPos = headPos + Vector3.new(0, 0.5, 0),
+        FeetPos = rootPos - Vector3.new(0, 3, 0)
     }
 end
 
--- Tạo ESP cho player
-local function CreateESP(Player)
+-- Tạo ESP cho một player
+function CreateESP(Player)
     if Player == LocalPlayer then return end
     
     local Character = Player.Character
     if not Character then return end
     
-    -- Đợi character load đầy đủ
     local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
     local Head = Character:FindFirstChild("Head")
     local Humanoid = Character:FindFirstChild("Humanoid")
     
     if not HumanoidRootPart or not Head or not Humanoid then
-        -- Thử đợi thêm
-        task.wait(0.5)
+        task.wait(0.3)
         Character = Player.Character
         if not Character then return end
         HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
@@ -389,51 +445,52 @@ local function CreateESP(Player)
         if not HumanoidRootPart or not Head or not Humanoid then return end
     end
     
-    -- Clean up old ESP
+    -- Xóa ESP cũ nếu có
     if ESPObjects[Player] then
-        for _, obj in pairs(ESPObjects[Player]) do
-            if obj and type(obj) ~= "thread" then
-                pcall(function() 
-                    if type(obj) == "userdata" then
-                        obj:Destroy() 
-                    elseif obj.Remove then
-                        obj:Remove()
-                    end
-                end)
-            end
+        if ESPObjects[Player].Connection then
+            ESPObjects[Player].Connection:Disconnect()
         end
+        if ESPObjects[Player].Box then pcall(function() ESPObjects[Player].Box:Destroy() end) end
+        if ESPObjects[Player].Tracer then pcall(function() ESPObjects[Player].Tracer:Destroy() end) end
+        if ESPObjects[Player].NameTag then pcall(function() ESPObjects[Player].NameTag:Destroy() end) end
+        if ESPObjects[Player].DistanceTag then pcall(function() ESPObjects[Player].DistanceTag:Destroy() end) end
     end
-    ESPObjects[Player] = {}
+    
+    -- Tạo data structure cho player
+    ESPObjects[Player] = {
+        Box = nil,
+        Tracer = nil,
+        NameTag = nil,
+        DistanceTag = nil,
+        Connection = nil
+    }
     
     -- Tạo Box
-    local Box = nil
     if Drawing and Drawing.new then
-        Box = Drawing.new("Square")
+        local Box = Drawing.new("Square")
         Box.Visible = false
         Box.Color = Settings.ESP.BoxColor
         Box.Thickness = Settings.ESP.BoxThickness
         Box.Transparency = Settings.ESP.BoxTransparency
         Box.Filled = false
         Box.ZIndex = 1
-        table.insert(ESPObjects[Player], Box)
+        ESPObjects[Player].Box = Box
     end
     
     -- Tạo Tracer
-    local Tracer = nil
     if Drawing and Drawing.new then
-        Tracer = Drawing.new("Line")
+        local Tracer = Drawing.new("Line")
         Tracer.Visible = false
         Tracer.Color = Settings.ESP.TracerColor
         Tracer.Thickness = Settings.ESP.TracerThickness
         Tracer.Transparency = Settings.ESP.TracerTransparency
         Tracer.ZIndex = 1
-        table.insert(ESPObjects[Player], Tracer)
+        ESPObjects[Player].Tracer = Tracer
     end
     
     -- Tạo Name Tag
-    local NameTag = nil
     if Drawing and Drawing.new then
-        NameTag = Drawing.new("Text")
+        local NameTag = Drawing.new("Text")
         NameTag.Visible = false
         NameTag.Color = Settings.ESP.NameColor
         NameTag.Size = Settings.ESP.NameSize
@@ -442,13 +499,12 @@ local function CreateESP(Player)
         NameTag.Outline = true
         NameTag.OutlineColor = Color3.new(0, 0, 0)
         NameTag.ZIndex = 2
-        table.insert(ESPObjects[Player], NameTag)
+        ESPObjects[Player].NameTag = NameTag
     end
     
     -- Tạo Distance Tag
-    local DistanceTag = nil
     if Drawing and Drawing.new then
-        DistanceTag = Drawing.new("Text")
+        local DistanceTag = Drawing.new("Text")
         DistanceTag.Visible = false
         DistanceTag.Color = Settings.ESP.DistanceColor
         DistanceTag.Size = Settings.ESP.DistanceSize
@@ -456,13 +512,24 @@ local function CreateESP(Player)
         DistanceTag.Outline = true
         DistanceTag.OutlineColor = Color3.new(0, 0, 0)
         DistanceTag.ZIndex = 2
-        table.insert(ESPObjects[Player], DistanceTag)
+        ESPObjects[Player].DistanceTag = DistanceTag
     end
     
     -- Render Loop
     local Connection
     Connection = RunService.RenderStepped:Connect(function()
-        -- Kiểm tra ESP enabled
+        local data = ESPObjects[Player]
+        if not data then 
+            if Connection then Connection:Disconnect() end
+            return 
+        end
+        
+        local Box = data.Box
+        local Tracer = data.Tracer
+        local NameTag = data.NameTag
+        local DistanceTag = data.DistanceTag
+        
+        -- Kiểm tra ESP Master Enable
         if not Settings.ESP.Enabled then
             if Box then Box.Visible = false end
             if Tracer then Tracer.Visible = false end
@@ -471,7 +538,7 @@ local function CreateESP(Player)
             return
         end
         
-        -- Kiểm tra player và character còn tồn tại
+        -- Kiểm tra player tồn tại
         if not Player or not Player.Parent then
             if Connection then Connection:Disconnect() end
             return
@@ -504,19 +571,19 @@ local function CreateESP(Player)
             return
         end
         
-        -- Lấy bounds của nhân vật
+        -- Lấy bounds
         local bounds = GetCharacterBounds(currentCharacter)
         if not bounds then
             if Box then Box.Visible = false end
             return
         end
         
-        -- Lấy vị trí LocalPlayer
+        -- Tính khoảng cách
         local localChar = LocalPlayer.Character
         local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
         local distance = localRoot and (localRoot.Position - bounds.RootPos).Magnitude or 9999
         
-        -- Kiểm tra khoảng cách
+        -- Kiểm tra max distance
         if distance > Settings.ESP.MaxDistance then
             if Box then Box.Visible = false end
             if Tracer then Tracer.Visible = false end
@@ -525,7 +592,7 @@ local function CreateESP(Player)
             return
         end
         
-        -- Chuyển đổi sang màn hình
+        -- World to Screen
         local feetScreen, feetOnScreen, feetDepth = WorldToScreen(bounds.FeetPos)
         local headScreen, headOnScreen, headDepth = WorldToScreen(bounds.HeadPos)
         local centerScreen, centerOnScreen = WorldToScreen(bounds.Center)
@@ -538,48 +605,62 @@ local function CreateESP(Player)
             return
         end
         
-        -- Tính toán kích thước box
+        -- Tính kích thước box
         local boxHeight = math.abs(headScreen.Y - feetScreen.Y)
-        local boxWidth = boxHeight * 0.55 -- Tỉ lệ width/height
+        local boxWidth = boxHeight * 0.55
         
-        -- Vẽ Box
-        if Box and Settings.ESP.Box then
-            Box.Size = Vector2.new(boxWidth, boxHeight)
-            Box.Position = Vector2.new(centerScreen.X - boxWidth/2, feetScreen.Y - boxHeight)
-            Box.Visible = true
-            Box.Color = Settings.ESP.BoxColor
+        -- Cập nhật Box - Kiểm tra Settings.ESP.Box TRỰC TIẾP
+        if Box then
+            if Settings.ESP.Box and Settings.ESP.Enabled then
+                Box.Size = Vector2.new(boxWidth, boxHeight)
+                Box.Position = Vector2.new(centerScreen.X - boxWidth/2, feetScreen.Y - boxHeight)
+                Box.Visible = true
+                Box.Color = Settings.ESP.BoxColor
+            else
+                Box.Visible = false
+            end
         end
         
-        -- Vẽ Tracer
-        if Tracer and Settings.ESP.Tracers then
-            local viewportSize = workspace.CurrentCamera.ViewportSize
-            Tracer.From = Vector2.new(viewportSize.X / 2, 
-                         Settings.ESP.TracerOrigin == "Bottom" and viewportSize.Y or 0)
-            Tracer.To = Vector2.new(centerScreen.X, feetScreen.Y)
-            Tracer.Visible = true
-            Tracer.Color = Settings.ESP.TracerColor
+        -- Cập nhật Tracer - Kiểm tra TRỰC TIẾP
+        if Tracer then
+            if Settings.ESP.Tracers and Settings.ESP.Enabled then
+                local viewportSize = workspace.CurrentCamera.ViewportSize
+                Tracer.From = Vector2.new(viewportSize.X / 2, 
+                             Settings.ESP.TracerOrigin == "Bottom" and viewportSize.Y or 0)
+                Tracer.To = Vector2.new(centerScreen.X, feetScreen.Y)
+                Tracer.Visible = true
+                Tracer.Color = Settings.ESP.TracerColor
+            else
+                Tracer.Visible = false
+            end
         end
         
-        -- Vẽ tên
-        if NameTag and Settings.ESP.Names then
-            local displayName = Player.DisplayName or Player.Name
-            NameTag.Text = displayName
-            NameTag.Position = Vector2.new(centerScreen.X, headScreen.Y - 25)
-            NameTag.Visible = true
-            NameTag.Color = Settings.ESP.NameColor
+        -- Cập nhật Name - Kiểm tra TRỰC TIẾP
+        if NameTag then
+            if Settings.ESP.Names and Settings.ESP.Enabled then
+                NameTag.Text = Player.DisplayName or Player.Name
+                NameTag.Position = Vector2.new(centerScreen.X, headScreen.Y - 25)
+                NameTag.Visible = true
+                NameTag.Color = Settings.ESP.NameColor
+            else
+                NameTag.Visible = false
+            end
         end
         
-        -- Vẽ khoảng cách
-        if DistanceTag and Settings.ESP.Distance then
-            DistanceTag.Text = math.floor(distance) .. "m"
-            DistanceTag.Position = Vector2.new(centerScreen.X, headScreen.Y - 8)
-            DistanceTag.Visible = true
-            DistanceTag.Color = Settings.ESP.DistanceColor
+        -- Cập nhật Distance - Kiểm tra TRỰC TIẾP
+        if DistanceTag then
+            if Settings.ESP.Distance and Settings.ESP.Enabled then
+                DistanceTag.Text = math.floor(distance) .. "m"
+                DistanceTag.Position = Vector2.new(centerScreen.X, headScreen.Y - 8)
+                DistanceTag.Visible = true
+                DistanceTag.Color = Settings.ESP.DistanceColor
+            else
+                DistanceTag.Visible = false
+            end
         end
     end)
     
-    -- Lưu connection
-    table.insert(ESPObjects[Player], Connection)
+    ESPObjects[Player].Connection = Connection
 end
 
 -- Player Added
@@ -587,7 +668,7 @@ local function OnPlayerAdded(Player)
     if Player == LocalPlayer then return end
     
     local function OnCharacterAdded(Character)
-        task.wait(0.3) -- Đợi character load
+        task.wait(0.3)
         CreateESP(Player)
     end
     
@@ -600,20 +681,15 @@ end
 
 -- Player Removing
 local function OnPlayerRemoving(Player)
-    if ESPObjects[Player] then
-        for _, obj in pairs(ESPObjects[Player]) do
-            if obj then
-                pcall(function()
-                    if type(obj) == "userdata" then
-                        obj:Destroy()
-                    elseif type(obj) == "thread" then
-                        obj:Disconnect()
-                    elseif obj.Remove then
-                        obj:Remove()
-                    end
-                end)
-            end
+    local data = ESPObjects[Player]
+    if data then
+        if data.Connection then
+            data.Connection:Disconnect()
         end
+        if data.Box then pcall(function() data.Box:Destroy() end) end
+        if data.Tracer then pcall(function() data.Tracer:Destroy() end) end
+        if data.NameTag then pcall(function() data.NameTag:Destroy() end) end
+        if data.DistanceTag then pcall(function() data.DistanceTag:Destroy() end) end
         ESPObjects[Player] = nil
     end
 end
@@ -635,7 +711,6 @@ local function UpdatePlayerCount()
             PlayerCountLabel.Text = "👥 Players: " .. count
         end
         
-        -- Cập nhật text trên icon thu nhỏ
         if MinimizeButton then
             MinimizeButton.Text = "ESP\n" .. count
         end
@@ -655,28 +730,31 @@ Players.PlayerRemoving:Connect(OnPlayerRemoving)
 -- Bắt đầu đếm player
 coroutine.wrap(UpdatePlayerCount)()
 
--- Hàm reconnect ESP khi player respawn
+-- Refresh khi LocalPlayer respawn
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.5)
-    -- Refresh ESP cho tất cả player
-    for _, Player in pairs(Players:GetPlayers()) do
-        if Player ~= LocalPlayer and Player.Character then
-            OnPlayerRemoving(Player)
-            OnPlayerAdded(Player)
-        end
-    end
+    RefreshESP()
 end)
 
 -- Cleanup
 LocalPlayer.OnTeleport:Connect(function()
     if ScreenGui then ScreenGui:Destroy() end
-    ClearESP()
+    for player, data in pairs(ESPObjects) do
+        if data then
+            if data.Connection then data.Connection:Disconnect() end
+            if data.Box then pcall(function() data.Box:Destroy() end) end
+            if data.Tracer then pcall(function() data.Tracer:Destroy() end) end
+            if data.NameTag then pcall(function() data.NameTag:Destroy() end) end
+            if data.DistanceTag then pcall(function() data.DistanceTag:Destroy() end) end
+        end
+    end
+    ESPObjects = {}
 end)
 
 -- Thông báo
 if Drawing and Drawing.new then
     local Notif = Drawing.new("Text")
-    Notif.Text = "✅ Universal ESP Loaded! [Delete] để thu nhỏ/mở menu"
+    Notif.Text = "✅ Universal ESP Loaded! [Delete] Menu"
     Notif.Size = 18
     Notif.Color = Color3.fromRGB(0, 255, 100)
     Notif.Center = true
@@ -694,7 +772,7 @@ if Drawing and Drawing.new then
 end
 
 print("=================================")
-print("Universal ESP Script Loaded!")
-print("Delete = Thu nhỏ/Mở Menu")
-print("Kéo icon ESP để di chuyển")
+print("✅ Universal ESP Script Loaded!")
+print("🔧 Toggles hoạt động realtime")
+print("🗑️ Delete = Thu nhỏ/Mở Menu")
 print("=================================")
