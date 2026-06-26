@@ -1,8 +1,8 @@
 --[[
-    UNIVERSAL ESP SCRIPT - FULLY FIXED
-    Hỗ trợ: Delta Executor
-    Tính năng: ESP Box, Line, Name, Distance, Player Count, Menu thu nhỏ
-    Fix: Toggle hoạt động chính xác, ESP cập nhật realtime
+    KILL AURA SCRIPT - DELTA EXECUTOR
+    Tự động tấn công người chơi xung quanh
+    Hỗ trợ: Dao, kiếm, tool và tất cả vũ khí
+    Phím tắt: Delete để mở/tắt menu
 --]]
 
 -- Services
@@ -10,753 +10,678 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
 
 -- Settings
 local Settings = {
-    ESP = {
-        Enabled = true,
-        Box = true,
-        BoxColor = Color3.fromRGB(255, 255, 255),
-        BoxTransparency = 1,
-        BoxThickness = 2,
-        Tracers = true,
-        TracerColor = Color3.fromRGB(255, 255, 255),
-        TracerTransparency = 1,
-        TracerThickness = 1,
-        TracerOrigin = "Bottom",
-        Names = true,
-        NameColor = Color3.fromRGB(255, 255, 255),
-        NameSize = 14,
-        NameTransparency = 1,
-        Distance = true,
-        DistanceColor = Color3.fromRGB(255, 255, 255),
-        DistanceSize = 13,
-        ShowTeam = false,
-        MaxDistance = 3000,
+    KillAura = {
+        Enabled = false,
+        Range = 15, -- Phạm vi tấn công (studs)
+        TargetTeam = false, -- Tấn công đồng đội
+        AttackMethod = "Auto", -- Auto, Click, Equip
+        FOV = 360, -- Góc tấn công (độ)
+        FOVVisible = false, -- Hiển thị vòng tròn FOV
+        Delay = 0.1, -- Thời gian giữa các lần tấn công
     },
     Menu = {
         Keybind = Enum.KeyCode.Delete,
-        Visible = true,
-        Minimized = false
+        Visible = true
     }
 }
 
--- ESP Objects Table
-local ESPObjects = {}
--- Lưu tất cả connections để cleanup
-local AllConnections = {}
+-- Biến toàn cục
+local KillAuraConnection = nil
+local CurrentTool = nil
+local HitConnections = {}
 
--- Create ScreenGui
+-- Tạo ScreenGui
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "UniversalESP"
+ScreenGui.Name = "KillAuraGUI"
 ScreenGui.Parent = CoreGui
 ScreenGui.ResetOnSpawn = false
+
+-- FOV Circle
+local FOVCircle = nil
+if Drawing and Drawing.new then
+    FOVCircle = Drawing.new("Circle")
+    FOVCircle.Visible = false
+    FOVCircle.Color = Color3.fromRGB(255, 50, 50)
+    FOVCircle.Thickness = 1
+    FOVCircle.Transparency = 0.7
+    FOVCircle.Filled = false
+    FOVCircle.Radius = 100
+    FOVCircle.Position = Vector2.new(0, 0)
+end
 
 -- Menu elements
 local MenuGui
 local MainFrame
-local PlayerCountLabel
-local MinimizeButton
+local SliderConnections = {}
 
--- Tạo nút toggle
-local function CreateToggleButton(Parent, Name, YPos, DefaultState, Callback)
-    local ToggleFrame = Instance.new("Frame")
-    ToggleFrame.Size = UDim2.new(1, -20, 0, 30)
-    ToggleFrame.Position = UDim2.new(0, 10, 0, YPos)
-    ToggleFrame.BackgroundTransparency = 1
-    ToggleFrame.Parent = Parent
+-- Hàm tạo Toggle
+local function CreateToggle(parent, text, yPos, default, callback)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -20, 0, 35)
+    frame.Position = UDim2.new(0, 10, 0, yPos)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
     
-    local ToggleLabel = Instance.new("TextLabel")
-    ToggleLabel.Size = UDim2.new(0.7, 0, 1, 0)
-    ToggleLabel.BackgroundTransparency = 1
-    ToggleLabel.Text = Name
-    ToggleLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    ToggleLabel.TextSize = 14
-    ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    ToggleLabel.Font = Enum.Font.Gotham
-    ToggleLabel.Parent = ToggleFrame
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.65, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextSize = 14
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.Parent = frame
     
-    local ToggleButton = Instance.new("TextButton")
-    ToggleButton.Size = UDim2.new(0, 40, 0, 20)
-    ToggleButton.Position = UDim2.new(1, -40, 0.5, -10)
-    ToggleButton.BackgroundColor3 = DefaultState and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 50, 50)
-    ToggleButton.BorderSizePixel = 0
-    ToggleButton.Text = DefaultState and "ON" or "OFF"
-    ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    ToggleButton.TextSize = 12
-    ToggleButton.Font = Enum.Font.GothamBold
-    ToggleButton.AutoButtonColor = false
-    ToggleButton.Parent = ToggleFrame
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 45, 0, 22)
+    btn.Position = UDim2.new(1, -50, 0.5, -11)
+    btn.BackgroundColor3 = default and Color3.fromRGB(0, 200, 100) or Color3.fromRGB(200, 50, 50)
+    btn.BorderSizePixel = 0
+    btn.Text = default and "ON" or "OFF"
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.GothamBold
+    btn.AutoButtonColor = false
+    btn.Parent = frame
     
-    local ButtonCorner = Instance.new("UICorner")
-    ButtonCorner.CornerRadius = UDim.new(0, 4)
-    ButtonCorner.Parent = ToggleButton
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 5)
+    corner.Parent = btn
     
-    -- Trạng thái hiện tại
-    local isEnabled = DefaultState
+    local state = default
     
-    -- Hàm cập nhật giao diện nút
-    local function UpdateButton()
-        ToggleButton.BackgroundColor3 = isEnabled and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 50, 50)
-        ToggleButton.Text = isEnabled and "ON" or "OFF"
-    end
-    
-    -- Sự kiện click
-    ToggleButton.MouseButton1Click:Connect(function()
-        isEnabled = not isEnabled
-        UpdateButton()
-        if Callback then
-            Callback(isEnabled)
-        end
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        btn.BackgroundColor3 = state and Color3.fromRGB(0, 200, 100) or Color3.fromRGB(200, 50, 50)
+        btn.Text = state and "ON" or "OFF"
+        callback(state)
     end)
     
-    -- Trả về object để có thể lấy trạng thái
     return {
-        Button = ToggleButton,
-        GetState = function() return isEnabled end,
-        SetState = function(state) 
-            isEnabled = state 
-            UpdateButton()
-            if Callback then
-                Callback(state)
-            end
+        Button = btn,
+        GetState = function() return state end,
+        SetState = function(s)
+            state = s
+            btn.BackgroundColor3 = state and Color3.fromRGB(0, 200, 100) or Color3.fromRGB(200, 50, 50)
+            btn.Text = state and "ON" or "OFF"
+            callback(state)
         end
     }
 end
 
--- Tạo Menu chính
+-- Hàm tạo Slider
+local function CreateSlider(parent, text, yPos, min, max, default, callback)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -20, 0, 60)
+    frame.Position = UDim2.new(0, 10, 0, yPos)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 20)
+    label.BackgroundTransparency = 1
+    label.Text = text .. ": " .. default
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextSize = 14
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.Parent = frame
+    
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Size = UDim2.new(1, -10, 0, 20)
+    sliderFrame.Position = UDim2.new(0, 5, 0, 25)
+    sliderFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    sliderFrame.BorderSizePixel = 0
+    sliderFrame.Parent = frame
+    
+    local sliderCorner = Instance.new("UICorner")
+    sliderCorner.CornerRadius = UDim.new(0, 10)
+    sliderCorner.Parent = sliderFrame
+    
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+    fill.BorderSizePixel = 0
+    fill.Parent = sliderFrame
+    
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(0, 10)
+    fillCorner.Parent = fill
+    
+    local sliderBtn = Instance.new("TextButton")
+    sliderBtn.Size = UDim2.new(0, 20, 0, 20)
+    sliderBtn.Position = UDim2.new((default - min) / (max - min), -10, 0, 0)
+    sliderBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    sliderBtn.BorderSizePixel = 0
+    sliderBtn.Text = ""
+    sliderBtn.AutoButtonColor = false
+    sliderBtn.Parent = sliderFrame
+    
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 10)
+    btnCorner.Parent = sliderBtn
+    
+    local isDragging = false
+    local currentValue = default
+    
+    local function updateSlider(input)
+        local mousePos = input.Position.X
+        local sliderPos = sliderFrame.AbsolutePosition.X
+        local sliderWidth = sliderFrame.AbsoluteSize.X
+        
+        local percent = math.clamp((mousePos - sliderPos) / sliderWidth, 0, 1)
+        currentValue = min + (max - min) * percent
+        currentValue = math.floor(currentValue * 10) / 10
+        
+        fill.Size = UDim2.new(percent, 0, 1, 0)
+        sliderBtn.Position = UDim2.new(percent, -10, 0, 0)
+        label.Text = text .. ": " .. currentValue
+        
+        callback(currentValue)
+    end
+    
+    sliderBtn.MouseButton1Down:Connect(function()
+        isDragging = true
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            isDragging = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSlider(input)
+        end
+    end)
+    
+    sliderFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            isDragging = true
+            updateSlider(input)
+        end
+    end)
+    
+    return {
+        GetValue = function() return currentValue end,
+        SetValue = function(val)
+            currentValue = val
+            local percent = (val - min) / (max - min)
+            fill.Size = UDim2.new(percent, 0, 1, 0)
+            sliderBtn.Position = UDim2.new(percent, -10, 0, 0)
+            label.Text = text .. ": " .. val
+            callback(val)
+        end
+    }
+end
+
+-- Tạo Menu
 local function CreateMenu()
     MenuGui = Instance.new("ScreenGui")
-    MenuGui.Name = "ESPMenu"
+    MenuGui.Name = "KillAuraMenu"
     MenuGui.Parent = CoreGui
     MenuGui.ResetOnSpawn = false
-    MenuGui.Enabled = Settings.Menu.Visible and not Settings.Menu.Minimized
+    MenuGui.Enabled = Settings.Menu.Visible
     
     MainFrame = Instance.new("Frame")
     MainFrame.Name = "MainFrame"
-    MainFrame.Size = UDim2.new(0, 250, 0, 370)
-    MainFrame.Position = UDim2.new(0.5, -125, 0.5, -185)
-    MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    MainFrame.Size = UDim2.new(0, 280, 0, 420)
+    MainFrame.Position = UDim2.new(0.5, -140, 0.5, -210)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
     MainFrame.BorderSizePixel = 0
     MainFrame.Active = true
     MainFrame.Draggable = true
     MainFrame.Parent = MenuGui
     
-    local UICorner = Instance.new("UICorner")
-    UICorner.CornerRadius = UDim.new(0, 8)
-    UICorner.Parent = MainFrame
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = MainFrame
     
     -- Title
-    local Title = Instance.new("TextLabel")
-    Title.Size = UDim2.new(1, 0, 0, 40)
-    Title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    Title.BorderSizePixel = 0
-    Title.Text = "UNIVERSAL ESP"
-    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Title.TextSize = 20
-    Title.Font = Enum.Font.GothamBold
-    Title.Parent = MainFrame
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 45)
+    titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = MainFrame
     
-    local TitleCorner = Instance.new("UICorner")
-    TitleCorner.CornerRadius = UDim.new(0, 8)
-    TitleCorner.Parent = Title
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 10)
+    titleCorner.Parent = titleBar
     
-    -- Minimize Button (top right)
-    local MiniButton = Instance.new("TextButton")
-    MiniButton.Size = UDim2.new(0, 30, 0, 30)
-    MiniButton.Position = UDim2.new(1, -35, 0, 5)
-    MiniButton.BackgroundColor3 = Color3.fromRGB(255, 180, 0)
-    MiniButton.BorderSizePixel = 0
-    MiniButton.Text = "—"
-    MiniButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    MiniButton.TextSize = 20
-    MiniButton.Font = Enum.Font.GothamBold
-    MiniButton.AutoButtonColor = false
-    MiniButton.Parent = MainFrame
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -50, 1, 0)
+    title.Position = UDim2.new(0, 25, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "⚔️ KILL AURA"
+    title.TextColor3 = Color3.fromRGB(255, 100, 100)
+    title.TextSize = 20
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Font = Enum.Font.GothamBold
+    title.Parent = titleBar
     
-    local MiniCorner = Instance.new("UICorner")
-    MiniCorner.CornerRadius = UDim.new(0, 4)
-    MiniCorner.Parent = MiniButton
+    -- Status Indicator
+    local statusIndicator = Instance.new("Frame")
+    statusIndicator.Name = "StatusIndicator"
+    statusIndicator.Size = UDim2.new(0, 10, 0, 10)
+    statusIndicator.Position = UDim2.new(0, 10, 0.5, -5)
+    statusIndicator.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    statusIndicator.BorderSizePixel = 0
+    statusIndicator.Parent = titleBar
     
-    MiniButton.MouseButton1Click:Connect(function()
-        MinimizeMenu()
-    end)
+    local statusCorner = Instance.new("UICorner")
+    statusCorner.CornerRadius = UDim.new(0, 5)
+    statusCorner.Parent = statusIndicator
     
-    -- Player Count
-    PlayerCountLabel = Instance.new("TextLabel")
-    PlayerCountLabel.Name = "PlayerCount"
-    PlayerCountLabel.Size = UDim2.new(1, -20, 0, 30)
-    PlayerCountLabel.Position = UDim2.new(0, 10, 0, 50)
-    PlayerCountLabel.BackgroundTransparency = 1
-    PlayerCountLabel.Text = "Players: 0"
-    PlayerCountLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    PlayerCountLabel.TextSize = 16
-    PlayerCountLabel.TextXAlignment = Enum.TextXAlignment.Left
-    PlayerCountLabel.Font = Enum.Font.Gotham
-    PlayerCountLabel.Parent = MainFrame
-    
-    -- Tạo các toggle với callback cập nhật Settings trực tiếp
-    local Toggles = {}
-    
-    Toggles.ESPEnabled = CreateToggleButton(MainFrame, "ESP Enabled", 90, Settings.ESP.Enabled, function(state)
-        Settings.ESP.Enabled = state
-        print("ESP Enabled:", state)
-        if not state then
-            -- Ẩn tất cả ESP nhưng không xóa
-            for player, data in pairs(ESPObjects) do
-                if data and data.Box then data.Box.Visible = false end
-                if data and data.Tracer then data.Tracer.Visible = false end
-                if data and data.NameTag then data.NameTag.Visible = false end
-                if data and data.DistanceTag then data.DistanceTag.Visible = false end
-            end
+    -- Toggles
+    local function updateStatusIndicator()
+        if statusIndicator then
+            statusIndicator.BackgroundColor3 = Settings.KillAura.Enabled and 
+                Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 50, 50)
         end
-    end)
-    
-    Toggles.Box = CreateToggleButton(MainFrame, "ESP Box", 125, Settings.ESP.Box, function(state)
-        Settings.ESP.Box = state
-        print("Box:", state)
-        -- Cập nhật visibility cho tất cả box hiện có
-        for player, data in pairs(ESPObjects) do
-            if data and data.Box then
-                data.Box.Visible = state and Settings.ESP.Enabled
-            end
-        end
-        -- Nếu bật lại, refresh ESP
-        if state and Settings.ESP.Enabled then
-            RefreshESP()
-        end
-    end)
-    
-    Toggles.Tracers = CreateToggleButton(MainFrame, "ESP Tracers", 160, Settings.ESP.Tracers, function(state)
-        Settings.ESP.Tracers = state
-        print("Tracers:", state)
-        for player, data in pairs(ESPObjects) do
-            if data and data.Tracer then
-                data.Tracer.Visible = state and Settings.ESP.Enabled
-            end
-        end
-        if state and Settings.ESP.Enabled then
-            RefreshESP()
-        end
-    end)
-    
-    Toggles.Names = CreateToggleButton(MainFrame, "ESP Names", 195, Settings.ESP.Names, function(state)
-        Settings.ESP.Names = state
-        print("Names:", state)
-        for player, data in pairs(ESPObjects) do
-            if data and data.NameTag then
-                data.NameTag.Visible = state and Settings.ESP.Enabled
-            end
-        end
-        if state and Settings.ESP.Enabled then
-            RefreshESP()
-        end
-    end)
-    
-    Toggles.Distance = CreateToggleButton(MainFrame, "ESP Distance", 230, Settings.ESP.Distance, function(state)
-        Settings.ESP.Distance = state
-        print("Distance:", state)
-        for player, data in pairs(ESPObjects) do
-            if data and data.DistanceTag then
-                data.DistanceTag.Visible = state and Settings.ESP.Enabled
-            end
-        end
-        if state and Settings.ESP.Enabled then
-            RefreshESP()
-        end
-    end)
-    
-    -- Close Button (Thu nhỏ)
-    local CloseButton = Instance.new("TextButton")
-    CloseButton.Size = UDim2.new(0, 80, 0, 30)
-    CloseButton.Position = UDim2.new(0.5, -40, 0, 330)
-    CloseButton.BackgroundColor3 = Color3.fromRGB(255, 100, 50)
-    CloseButton.BorderSizePixel = 0
-    CloseButton.Text = "THU NHỎ"
-    CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    CloseButton.TextSize = 14
-    CloseButton.Font = Enum.Font.GothamBold
-    CloseButton.AutoButtonColor = false
-    CloseButton.Parent = MainFrame
-    
-    local CloseCorner = Instance.new("UICorner")
-    CloseCorner.CornerRadius = UDim.new(0, 4)
-    CloseCorner.Parent = CloseButton
-    
-    CloseButton.MouseButton1Click:Connect(function()
-        MinimizeMenu()
-    end)
-    
-    return MenuGui, PlayerCountLabel, Toggles
-end
-
--- Tạo icon thu nhỏ
-local function CreateMinimizedIcon()
-    MinimizeButton = Instance.new("TextButton")
-    MinimizeButton.Name = "MinimizedESP"
-    MinimizeButton.Size = UDim2.new(0, 50, 0, 50)
-    MinimizeButton.Position = UDim2.new(0, 20, 0, 100)
-    MinimizeButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    MinimizeButton.BorderSizePixel = 0
-    MinimizeButton.Text = "ESP"
-    MinimizeButton.TextColor3 = Color3.fromRGB(0, 255, 100)
-    MinimizeButton.TextSize = 16
-    MinimizeButton.Font = Enum.Font.GothamBold
-    MinimizeButton.Active = true
-    MinimizeButton.Draggable = true
-    MinimizeButton.Visible = Settings.Menu.Minimized
-    MinimizeButton.AutoButtonColor = false
-    MinimizeButton.Parent = ScreenGui
-    
-    local IconCorner = Instance.new("UICorner")
-    IconCorner.CornerRadius = UDim.new(0, 25)
-    IconCorner.Parent = MinimizeButton
-    
-    MinimizeButton.MouseButton1Click:Connect(function()
-        MaximizeMenu()
-    end)
-    
-    return MinimizeButton
-end
-
--- Thu nhỏ menu
-function MinimizeMenu()
-    Settings.Menu.Minimized = true
-    Settings.Menu.Visible = false
-    if MenuGui then
-        MenuGui.Enabled = false
     end
-    if MinimizeButton then
-        MinimizeButton.Visible = true
-    end
-end
-
--- Mở rộng menu
-function MaximizeMenu()
-    Settings.Menu.Minimized = false
-    Settings.Menu.Visible = true
-    if MenuGui then
-        MenuGui.Enabled = true
-    end
-    if MinimizeButton then
-        MinimizeButton.Visible = false
-    end
-end
-
--- Tạo menu và icon
-local Toggles
-MenuGui, PlayerCountLabel, Toggles = CreateMenu()
-MinimizeButton = CreateMinimizedIcon()
-
--- Toggle Menu Keybind
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == Settings.Menu.Keybind then
-        if Settings.Menu.Minimized then
-            MaximizeMenu()
+    
+    CreateToggle(MainFrame, "Kill Aura", 55, Settings.KillAura.Enabled, function(state)
+        Settings.KillAura.Enabled = state
+        updateStatusIndicator()
+        if state then
+            StartKillAura()
         else
-            MinimizeMenu()
+            StopKillAura()
         end
-    end
-end)
-
--- Refresh ESP cho tất cả player
-function RefreshESP()
-    -- Xóa ESP cũ và tạo lại
-    for player, data in pairs(ESPObjects) do
-        if data then
-            -- Ngắt connection cũ
-            if data.Connection then
-                data.Connection:Disconnect()
-                data.Connection = nil
-            end
-            -- Xóa drawing objects
-            if data.Box then pcall(function() data.Box:Destroy() end) end
-            if data.Tracer then pcall(function() data.Tracer:Destroy() end) end
-            if data.NameTag then pcall(function() data.NameTag:Destroy() end) end
-            if data.DistanceTag then pcall(function() data.DistanceTag:Destroy() end) end
-        end
-    end
-    ESPObjects = {}
+    end)
     
-    -- Tạo ESP mới cho tất cả player
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            CreateESP(player)
+    CreateToggle(MainFrame, "Tấn công đồng đội", 95, Settings.KillAura.TargetTeam, function(state)
+        Settings.KillAura.TargetTeam = state
+    end)
+    
+    CreateToggle(MainFrame, "Hiện vòng tròn FOV", 135, Settings.KillAura.FOVVisible, function(state)
+        Settings.KillAura.FOVVisible = state
+        if FOVCircle then
+            FOVCircle.Visible = state and Settings.KillAura.Enabled
         end
-    end
+    end)
+    
+    -- Sliders
+    local rangeSlider = CreateSlider(MainFrame, "🔴 Phạm vi (studs)", 180, 5, 50, Settings.KillAura.Range, function(val)
+        Settings.KillAura.Range = val
+        if FOVCircle then
+            FOVCircle.Radius = val * 10
+        end
+    end)
+    
+    local delaySlider = CreateSlider(MainFrame, "⏱️ Tốc độ đánh (giây)", 245, 0.05, 1, Settings.KillAura.Delay, function(val)
+        Settings.KillAura.Delay = val
+    end)
+    
+    local fovSlider = CreateSlider(MainFrame, "👁️ Góc FOV (độ)", 310, 30, 360, Settings.KillAura.FOV, function(val)
+        Settings.KillAura.FOV = val
+    end)
+    
+    -- Close Button
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 100, 0, 35)
+    closeBtn.Position = UDim2.new(0.5, -50, 0, 375)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "ĐÓNG MENU"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.TextSize = 14
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.AutoButtonColor = false
+    closeBtn.Parent = MainFrame
+    
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 8)
+    closeCorner.Parent = closeBtn
+    
+    closeBtn.MouseButton1Click:Connect(function()
+        Settings.Menu.Visible = false
+        MenuGui.Enabled = false
+    end)
+    
+    updateStatusIndicator()
+    return MenuGui
 end
 
--- World to Screen
-local function WorldToScreen(Position)
-    local Camera = workspace.CurrentCamera
-    if not Camera then return nil end
+-- Lấy tool tốt nhất trong inventory
+local function GetBestWeapon()
+    local backpack = LocalPlayer.Backpack
+    local character = LocalPlayer.Character
     
-    local ScreenPos, OnScreen = Camera:WorldToScreenPoint(Position)
-    return Vector2.new(ScreenPos.X, ScreenPos.Y), OnScreen, ScreenPos.Z
+    local tools = {}
+    
+    -- Thu thập tool từ backpack
+    if backpack then
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(tools, item)
+            end
+        end
+    end
+    
+    -- Thu thập tool đang cầm
+    if character then
+        for _, item in pairs(character:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(tools, item)
+            end
+        end
+    end
+    
+    if #tools == 0 then return nil end
+    
+    -- Ưu tiên tool có thể gây sát thương
+    -- Kiểm tra tool có Handle và script tấn công
+    for _, tool in pairs(tools) do
+        local handle = tool:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") then
+            -- Kiểm tra các thuộc tính đặc biệt
+            if tool:FindFirstChild("Damage") or 
+               tool:FindFirstChild("DamageScript") or
+               tool:FindFirstChild("SlashScript") or
+               tool:FindFirstChild("StabScript") then
+                return tool
+            end
+        end
+    end
+    
+    -- Nếu không tìm thấy tool đặc biệt, trả về tool đầu tiên
+    return tools[1]
 end
 
--- Lấy kích thước nhân vật
-local function GetCharacterBounds(Character)
-    local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
-    local Head = Character:FindFirstChild("Head")
-    local Humanoid = Character:FindFirstChild("Humanoid")
+-- Kích hoạt tấn công với tool
+local function AttackWithTool(tool, target)
+    if not tool or not target then return false end
     
-    if not HumanoidRootPart or not Head or not Humanoid then
-        return nil
+    local character = LocalPlayer.Character
+    if not character then return false end
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
+    
+    -- Đảm bảo tool được trang bị
+    if tool.Parent ~= character then
+        -- Trang bị tool
+        humanoid:EquipTool(tool)
+        task.wait(0.05) -- Đợi tool equip
     end
     
-    local rootPos = HumanoidRootPart.Position
-    local headPos = Head.Position
-    
-    local height = (headPos.Y - rootPos.Y) + 2
-    local width = height * 0.65
-    local centerPos = Vector3.new(rootPos.X, rootPos.Y + height/2, rootPos.Z)
-    
-    return {
-        Center = centerPos,
-        Height = height,
-        Width = width,
-        RootPos = rootPos,
-        HeadPos = headPos + Vector3.new(0, 0.5, 0),
-        FeetPos = rootPos - Vector3.new(0, 3, 0)
-    }
-end
-
--- Tạo ESP cho một player
-function CreateESP(Player)
-    if Player == LocalPlayer then return end
-    
-    local Character = Player.Character
-    if not Character then return end
-    
-    local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
-    local Head = Character:FindFirstChild("Head")
-    local Humanoid = Character:FindFirstChild("Humanoid")
-    
-    if not HumanoidRootPart or not Head or not Humanoid then
-        task.wait(0.3)
-        Character = Player.Character
-        if not Character then return end
-        HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
-        Head = Character:FindFirstChild("Head")
-        Humanoid = Character:FindFirstChild("Humanoid")
-        if not HumanoidRootPart or not Head or not Humanoid then return end
-    end
-    
-    -- Xóa ESP cũ nếu có
-    if ESPObjects[Player] then
-        if ESPObjects[Player].Connection then
-            ESPObjects[Player].Connection:Disconnect()
-        end
-        if ESPObjects[Player].Box then pcall(function() ESPObjects[Player].Box:Destroy() end) end
-        if ESPObjects[Player].Tracer then pcall(function() ESPObjects[Player].Tracer:Destroy() end) end
-        if ESPObjects[Player].NameTag then pcall(function() ESPObjects[Player].NameTag:Destroy() end) end
-        if ESPObjects[Player].DistanceTag then pcall(function() ESPObjects[Player].DistanceTag:Destroy() end) end
-    end
-    
-    -- Tạo data structure cho player
-    ESPObjects[Player] = {
-        Box = nil,
-        Tracer = nil,
-        NameTag = nil,
-        DistanceTag = nil,
-        Connection = nil
-    }
-    
-    -- Tạo Box
-    if Drawing and Drawing.new then
-        local Box = Drawing.new("Square")
-        Box.Visible = false
-        Box.Color = Settings.ESP.BoxColor
-        Box.Thickness = Settings.ESP.BoxThickness
-        Box.Transparency = Settings.ESP.BoxTransparency
-        Box.Filled = false
-        Box.ZIndex = 1
-        ESPObjects[Player].Box = Box
-    end
-    
-    -- Tạo Tracer
-    if Drawing and Drawing.new then
-        local Tracer = Drawing.new("Line")
-        Tracer.Visible = false
-        Tracer.Color = Settings.ESP.TracerColor
-        Tracer.Thickness = Settings.ESP.TracerThickness
-        Tracer.Transparency = Settings.ESP.TracerTransparency
-        Tracer.ZIndex = 1
-        ESPObjects[Player].Tracer = Tracer
-    end
-    
-    -- Tạo Name Tag
-    if Drawing and Drawing.new then
-        local NameTag = Drawing.new("Text")
-        NameTag.Visible = false
-        NameTag.Color = Settings.ESP.NameColor
-        NameTag.Size = Settings.ESP.NameSize
-        NameTag.Transparency = Settings.ESP.NameTransparency
-        NameTag.Center = true
-        NameTag.Outline = true
-        NameTag.OutlineColor = Color3.new(0, 0, 0)
-        NameTag.ZIndex = 2
-        ESPObjects[Player].NameTag = NameTag
-    end
-    
-    -- Tạo Distance Tag
-    if Drawing and Drawing.new then
-        local DistanceTag = Drawing.new("Text")
-        DistanceTag.Visible = false
-        DistanceTag.Color = Settings.ESP.DistanceColor
-        DistanceTag.Size = Settings.ESP.DistanceSize
-        DistanceTag.Center = true
-        DistanceTag.Outline = true
-        DistanceTag.OutlineColor = Color3.new(0, 0, 0)
-        DistanceTag.ZIndex = 2
-        ESPObjects[Player].DistanceTag = DistanceTag
-    end
-    
-    -- Render Loop
-    local Connection
-    Connection = RunService.RenderStepped:Connect(function()
-        local data = ESPObjects[Player]
-        if not data then 
-            if Connection then Connection:Disconnect() end
-            return 
-        end
-        
-        local Box = data.Box
-        local Tracer = data.Tracer
-        local NameTag = data.NameTag
-        local DistanceTag = data.DistanceTag
-        
-        -- Kiểm tra ESP Master Enable
-        if not Settings.ESP.Enabled then
-            if Box then Box.Visible = false end
-            if Tracer then Tracer.Visible = false end
-            if NameTag then NameTag.Visible = false end
-            if DistanceTag then DistanceTag.Visible = false end
-            return
-        end
-        
-        -- Kiểm tra player tồn tại
-        if not Player or not Player.Parent then
-            if Connection then Connection:Disconnect() end
-            return
-        end
-        
-        local currentCharacter = Player.Character
-        if not currentCharacter or not currentCharacter.Parent then
-            if Box then Box.Visible = false end
-            if Tracer then Tracer.Visible = false end
-            if NameTag then NameTag.Visible = false end
-            if DistanceTag then DistanceTag.Visible = false end
-            return
-        end
-        
-        local currentHumanoid = currentCharacter:FindFirstChild("Humanoid")
-        if not currentHumanoid or currentHumanoid.Health <= 0 then
-            if Box then Box.Visible = false end
-            if Tracer then Tracer.Visible = false end
-            if NameTag then NameTag.Visible = false end
-            if DistanceTag then DistanceTag.Visible = false end
-            return
-        end
-        
-        -- Kiểm tra team
-        if not Settings.ESP.ShowTeam and LocalPlayer.Team and Player.Team == LocalPlayer.Team then
-            if Box then Box.Visible = false end
-            if Tracer then Tracer.Visible = false end
-            if NameTag then NameTag.Visible = false end
-            if DistanceTag then DistanceTag.Visible = false end
-            return
-        end
-        
-        -- Lấy bounds
-        local bounds = GetCharacterBounds(currentCharacter)
-        if not bounds then
-            if Box then Box.Visible = false end
-            return
-        end
-        
-        -- Tính khoảng cách
-        local localChar = LocalPlayer.Character
-        local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
-        local distance = localRoot and (localRoot.Position - bounds.RootPos).Magnitude or 9999
-        
-        -- Kiểm tra max distance
-        if distance > Settings.ESP.MaxDistance then
-            if Box then Box.Visible = false end
-            if Tracer then Tracer.Visible = false end
-            if NameTag then NameTag.Visible = false end
-            if DistanceTag then DistanceTag.Visible = false end
-            return
-        end
-        
-        -- World to Screen
-        local feetScreen, feetOnScreen, feetDepth = WorldToScreen(bounds.FeetPos)
-        local headScreen, headOnScreen, headDepth = WorldToScreen(bounds.HeadPos)
-        local centerScreen, centerOnScreen = WorldToScreen(bounds.Center)
-        
-        if not feetOnScreen or not headOnScreen or feetDepth < 0 then
-            if Box then Box.Visible = false end
-            if Tracer then Tracer.Visible = false end
-            if NameTag then NameTag.Visible = false end
-            if DistanceTag then DistanceTag.Visible = false end
-            return
-        end
-        
-        -- Tính kích thước box
-        local boxHeight = math.abs(headScreen.Y - feetScreen.Y)
-        local boxWidth = boxHeight * 0.55
-        
-        -- Cập nhật Box - Kiểm tra Settings.ESP.Box TRỰC TIẾP
-        if Box then
-            if Settings.ESP.Box and Settings.ESP.Enabled then
-                Box.Size = Vector2.new(boxWidth, boxHeight)
-                Box.Position = Vector2.new(centerScreen.X - boxWidth/2, feetScreen.Y - boxHeight)
-                Box.Visible = true
-                Box.Color = Settings.ESP.BoxColor
-            else
-                Box.Visible = false
+    -- Phương pháp 1: Sử dụng Activate
+    pcall(function()
+        if tool:FindFirstChild("Handle") then
+            -- Di chuyển character đến gần mục tiêu
+            local rootPart = character:FindFirstChild("HumanoidRootPart")
+            local targetRoot = target:FindFirstChild("HumanoidRootPart")
+            
+            if rootPart and targetRoot then
+                -- Tính toán hướng
+                local direction = (targetRoot.Position - rootPart.Position).unit
+                
+                -- Cập nhật hướng nhìn
+                character:SetPrimaryPartCFrame(CFrame.new(rootPart.Position, rootPart.Position + direction * 10))
             end
+            
+            -- Kích hoạt tool
+            tool:Activate()
+            
+            -- Đợi một chút rồi deactivate
+            task.wait(0.1)
+            pcall(function()
+                tool:Deactivate()
+            end)
         end
-        
-        -- Cập nhật Tracer - Kiểm tra TRỰC TIẾP
-        if Tracer then
-            if Settings.ESP.Tracers and Settings.ESP.Enabled then
-                local viewportSize = workspace.CurrentCamera.ViewportSize
-                Tracer.From = Vector2.new(viewportSize.X / 2, 
-                             Settings.ESP.TracerOrigin == "Bottom" and viewportSize.Y or 0)
-                Tracer.To = Vector2.new(centerScreen.X, feetScreen.Y)
-                Tracer.Visible = true
-                Tracer.Color = Settings.ESP.TracerColor
-            else
-                Tracer.Visible = false
-            end
-        end
-        
-        -- Cập nhật Name - Kiểm tra TRỰC TIẾP
-        if NameTag then
-            if Settings.ESP.Names and Settings.ESP.Enabled then
-                NameTag.Text = Player.DisplayName or Player.Name
-                NameTag.Position = Vector2.new(centerScreen.X, headScreen.Y - 25)
-                NameTag.Visible = true
-                NameTag.Color = Settings.ESP.NameColor
-            else
-                NameTag.Visible = false
-            end
-        end
-        
-        -- Cập nhật Distance - Kiểm tra TRỰC TIẾP
-        if DistanceTag then
-            if Settings.ESP.Distance and Settings.ESP.Enabled then
-                DistanceTag.Text = math.floor(distance) .. "m"
-                DistanceTag.Position = Vector2.new(centerScreen.X, headScreen.Y - 8)
-                DistanceTag.Visible = true
-                DistanceTag.Color = Settings.ESP.DistanceColor
-            else
-                DistanceTag.Visible = false
+    end)
+    
+    -- Phương pháp 2: Fire RemoteEvent nếu có
+    pcall(function()
+        local handle = tool:FindFirstChild("Handle")
+        if handle then
+            -- Tìm remote events trong tool
+            for _, child in pairs(tool:GetDescendants()) do
+                if child:IsA("RemoteEvent") then
+                    -- Fire remote với thông tin mục tiêu
+                    pcall(function()
+                        child:FireServer(target)
+                    end)
+                end
             end
         end
     end)
     
-    ESPObjects[Player].Connection = Connection
+    -- Phương pháp 3: Click chuột ảo
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(
+            workspace.CurrentCamera.ViewportSize.X / 2,
+            workspace.CurrentCamera.ViewportSize.Y / 2,
+            0,
+            true,
+            game,
+            1
+        )
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(
+            workspace.CurrentCamera.ViewportSize.X / 2,
+            workspace.CurrentCamera.ViewportSize.Y / 2,
+            0,
+            false,
+            game,
+            1
+        )
+    end)
+    
+    return true
 end
 
--- Player Added
-local function OnPlayerAdded(Player)
-    if Player == LocalPlayer then return end
+-- Kiểm tra mục tiêu có trong FOV không
+local function IsInFOV(target)
+    local character = LocalPlayer.Character
+    if not character then return false end
     
-    local function OnCharacterAdded(Character)
-        task.wait(0.3)
-        CreateESP(Player)
-    end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = target:FindFirstChild("HumanoidRootPart")
     
-    if Player.Character then
-        OnCharacterAdded(Player.Character)
-    end
+    if not rootPart or not targetRoot then return false end
     
-    Player.CharacterAdded:Connect(OnCharacterAdded)
+    -- Tính khoảng cách
+    local distance = (rootPart.Position - targetRoot.Position).Magnitude
+    if distance > Settings.KillAura.Range then return false end
+    
+    -- Tính góc
+    local lookVector = rootPart.CFrame.LookVector
+    local direction = (targetRoot.Position - rootPart.Position).unit
+    local angle = math.acos(lookVector:Dot(direction))
+    local angleDeg = math.deg(angle)
+    
+    return angleDeg <= (Settings.KillAura.FOV / 2)
 end
 
--- Player Removing
-local function OnPlayerRemoving(Player)
-    local data = ESPObjects[Player]
-    if data then
-        if data.Connection then
-            data.Connection:Disconnect()
+-- Lấy mục tiêu gần nhất
+local function GetNearestTarget()
+    local character = LocalPlayer.Character
+    if not character then return nil end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return nil end
+    
+    local nearestTarget = nil
+    local nearestDistance = math.huge
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local targetChar = player.Character
+            if targetChar then
+                local targetHumanoid = targetChar:FindFirstChild("Humanoid")
+                local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+                
+                if targetHumanoid and targetHumanoid.Health > 0 and targetRoot then
+                    -- Kiểm tra team
+                    if not Settings.KillAura.TargetTeam and 
+                       LocalPlayer.Team and player.Team == LocalPlayer.Team then
+                        continue
+                    end
+                    
+                    -- Tính khoảng cách
+                    local distance = (rootPart.Position - targetRoot.Position).Magnitude
+                    
+                    -- Kiểm tra phạm vi và FOV
+                    if distance <= Settings.KillAura.Range then
+                        if Settings.KillAura.FOV >= 360 or IsInFOV(targetChar) then
+                            if distance < nearestDistance then
+                                nearestDistance = distance
+                                nearestTarget = targetChar
+                            end
+                        end
+                    end
+                end
+            end
         end
-        if data.Box then pcall(function() data.Box:Destroy() end) end
-        if data.Tracer then pcall(function() data.Tracer:Destroy() end) end
-        if data.NameTag then pcall(function() data.NameTag:Destroy() end) end
-        if data.DistanceTag then pcall(function() data.DistanceTag:Destroy() end) end
-        ESPObjects[Player] = nil
     end
+    
+    return nearestTarget
 end
 
--- Update Player Count
-local function UpdatePlayerCount()
-    while task.wait(1) do
-        local count = 0
-        for _, player in pairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character then
-                local humanoid = player.Character:FindFirstChild("Humanoid")
-                if humanoid and humanoid.Health > 0 then
-                    count = count + 1
+-- Main Kill Aura Loop
+local function KillAuraLoop()
+    while Settings.KillAura.Enabled do
+        -- Lấy mục tiêu gần nhất
+        local target = GetNearestTarget()
+        
+        if target then
+            -- Lấy tool tốt nhất
+            local weapon = GetBestWeapon()
+            
+            if weapon then
+                -- Tấn công với tool
+                AttackWithTool(weapon, target)
+            else
+                -- Nếu không có tool, vẫn tấn công bằng click
+                local character = LocalPlayer.Character
+                if character then
+                    local rootPart = character:FindFirstChild("HumanoidRootPart")
+                    local targetRoot = target:FindFirstChild("HumanoidRootPart")
+                    
+                    if rootPart and targetRoot then
+                        -- Hướng về mục tiêu
+                        local direction = (targetRoot.Position - rootPart.Position).unit
+                        character:SetPrimaryPartCFrame(CFrame.new(rootPart.Position, rootPart.Position + direction * 10))
+                        
+                        -- Click để tấn công
+                        pcall(function()
+                            VirtualInputManager:SendMouseButtonEvent(
+                                workspace.CurrentCamera.ViewportSize.X / 2,
+                                workspace.CurrentCamera.ViewportSize.Y / 2,
+                                0,
+                                true,
+                                game,
+                                1
+                            )
+                            task.wait(0.05)
+                            VirtualInputManager:SendMouseButtonEvent(
+                                workspace.CurrentCamera.ViewportSize.X / 2,
+                                workspace.CurrentCamera.ViewportSize.Y / 2,
+                                0,
+                                false,
+                                game,
+                                1
+                            )
+                        end)
+                    end
                 end
             end
         end
         
-        if PlayerCountLabel then
-            PlayerCountLabel.Text = "👥 Players: " .. count
+        -- Cập nhật FOV Circle
+        if FOVCircle and Settings.KillAura.FOVVisible then
+            local camera = workspace.CurrentCamera
+            if camera then
+                FOVCircle.Position = Vector2.new(
+                    camera.ViewportSize.X / 2,
+                    camera.ViewportSize.Y / 2
+                )
+                FOVCircle.Radius = Settings.KillAura.Range * 8
+            end
         end
         
-        if MinimizeButton then
-            MinimizeButton.Text = "ESP\n" .. count
+        task.wait(Settings.KillAura.Delay)
+    end
+end
+
+-- Bắt đầu Kill Aura
+function StartKillAura()
+    -- Dừng loop cũ nếu có
+    StopKillAura()
+    
+    -- Cập nhật FOV
+    if FOVCircle and Settings.KillAura.FOVVisible then
+        FOVCircle.Visible = true
+    end
+    
+    -- Bắt đầu loop mới
+    Settings.KillAura.Enabled = true
+    KillAuraConnection = coroutine.wrap(KillAuraLoop)
+    KillAuraConnection()
+    
+    print("⚔️ Kill Aura đã bắt đầu!")
+end
+
+-- Dừng Kill Aura
+function StopKillAura()
+    Settings.KillAura.Enabled = false
+    
+    if FOVCircle then
+        FOVCircle.Visible = false
+    end
+    
+    if KillAuraConnection then
+        KillAuraConnection = nil
+    end
+    
+    print("⏸️ Kill Aura đã dừng!")
+end
+
+-- Tạo Menu
+MenuGui = CreateMenu()
+
+-- Toggle Keybind
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Settings.Menu.Keybind then
+        Settings.Menu.Visible = not Settings.Menu.Visible
+        if MenuGui then
+            MenuGui.Enabled = Settings.Menu.Visible
         end
     end
-end
+end)
 
--- Khởi tạo
-for _, Player in pairs(Players:GetPlayers()) do
-    if Player ~= LocalPlayer then
-        OnPlayerAdded(Player)
-    end
-end
-
-Players.PlayerAdded:Connect(OnPlayerAdded)
-Players.PlayerRemoving:Connect(OnPlayerRemoving)
-
--- Bắt đầu đếm player
-coroutine.wrap(UpdatePlayerCount)()
-
--- Refresh khi LocalPlayer respawn
-LocalPlayer.CharacterAdded:Connect(function()
+-- Auto equip tool khi spawn
+LocalPlayer.CharacterAdded:Connect(function(character)
     task.wait(0.5)
-    RefreshESP()
+    if Settings.KillAura.Enabled then
+        StartKillAura()
+    end
 end)
 
 -- Cleanup
 LocalPlayer.OnTeleport:Connect(function()
+    StopKillAura()
     if ScreenGui then ScreenGui:Destroy() end
-    for player, data in pairs(ESPObjects) do
-        if data then
-            if data.Connection then data.Connection:Disconnect() end
-            if data.Box then pcall(function() data.Box:Destroy() end) end
-            if data.Tracer then pcall(function() data.Tracer:Destroy() end) end
-            if data.NameTag then pcall(function() data.NameTag:Destroy() end) end
-            if data.DistanceTag then pcall(function() data.DistanceTag:Destroy() end) end
-        end
-    end
-    ESPObjects = {}
+    if MenuGui then MenuGui:Destroy() end
+    if FOVCircle then FOVCircle:Destroy() end
 end)
 
 -- Thông báo
 if Drawing and Drawing.new then
     local Notif = Drawing.new("Text")
-    Notif.Text = "✅ Universal ESP Loaded! [Delete] Menu"
+    Notif.Text = "⚔️ Kill Aura Loaded! [Delete] để mở menu"
     Notif.Size = 18
-    Notif.Color = Color3.fromRGB(0, 255, 100)
+    Notif.Color = Color3.fromRGB(255, 100, 100)
     Notif.Center = true
     Notif.Outline = true
     Notif.OutlineColor = Color3.new(0, 0, 0)
@@ -772,7 +697,7 @@ if Drawing and Drawing.new then
 end
 
 print("=================================")
-print("✅ Universal ESP Script Loaded!")
-print("🔧 Toggles hoạt động realtime")
-print("🗑️ Delete = Thu nhỏ/Mở Menu")
+print("⚔️ KILL AURA SCRIPT LOADED!")
+print("🎯 Delete = Mở/Tắt Menu")
+print("🔪 Hỗ trợ: Dao, kiếm, tất cả vũ khí")
 print("=================================")
